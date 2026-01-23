@@ -16,6 +16,10 @@ type Collector struct {
 	bounceDrops      *prometheus.Desc
 	bounces          *prometheus.Desc
 	clicks           *prometheus.Desc
+	creditOverage    *prometheus.Desc
+	creditRemain     *prometheus.Desc
+	creditTotal      *prometheus.Desc
+	creditUsed       *prometheus.Desc
 	deferred         *prometheus.Desc
 	delivered        *prometheus.Desc
 	invalidEmails    *prometheus.Desc
@@ -55,6 +59,30 @@ func collector(logger log.Logger) *Collector {
 		clicks: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "clicks"),
 			"clicks",
+			[]string{"user_name"},
+			nil,
+		),
+		creditOverage: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "credit_overage"),
+			"credit_overage",
+			[]string{"user_name"},
+			nil,
+		),
+		creditRemain: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "credit_remaining"),
+			"credit_remaining",
+			[]string{"user_name"},
+			nil,
+		),
+		creditTotal: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "credit_total"),
+			"credit_total",
+			[]string{"user_name"},
+			nil,
+		),
+		creditUsed: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "credit_used"),
+			"credit_used",
 			[]string{"user_name"},
 			nil,
 		),
@@ -149,6 +177,13 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	statistics, err := collectByDate(queryDate, today)
+	if err != nil {
+		level.Error(c.logger).Log(err)
+
+		return
+	}
+
+	creditBalance, err := collectCreditBalance()
 	if err != nil {
 		level.Error(c.logger).Log(err)
 
@@ -253,4 +288,29 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			*sendGridUserName,
 		)
 	}
+
+	ch <- prometheus.MustNewConstMetric(
+		c.creditTotal,
+		prometheus.GaugeValue,
+		float64(creditBalance.Total),
+		*sendGridUserName,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.creditRemain,
+		prometheus.GaugeValue,
+		float64(creditBalance.Remain),
+		*sendGridUserName,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.creditUsed,
+		prometheus.GaugeValue,
+		float64(creditBalance.Used),
+		*sendGridUserName,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.creditOverage,
+		prometheus.GaugeValue,
+		float64(creditBalance.Overage),
+		*sendGridUserName,
+	)
 }
