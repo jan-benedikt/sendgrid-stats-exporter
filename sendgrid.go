@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	endpoint = "https://api.sendgrid.com/v3/stats"
+	statsEndpoint = "https://api.sendgrid.com/v3/stats"
+	userEndpoint  = "https://api.sendgrid.com/v3/user"
 )
 
 type Metrics struct {
@@ -42,8 +43,15 @@ type Statistics struct {
 	Stats []*Stat `json:"stats,omitempty"`
 }
 
+type CreditBalance struct {
+	Remain  int64 `json:"remain"`
+	Overage int64 `json:"overage"`
+	Total   int64 `json:"total"`
+	Used    int64 `json:"used"`
+}
+
 func collectByDate(timeStart time.Time, timeEnd time.Time) ([]*Statistics, error) {
-	parsedURL, err := url.Parse(endpoint)
+	parsedURL, err := url.Parse(statsEndpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +96,37 @@ func collectByDate(timeStart time.Time, timeEnd time.Time) ([]*Statistics, error
 		}
 
 		return stats, nil
+	default:
+		return nil, fmt.Errorf("status code = %d, response = %s", res.StatusCode, res.Body)
+	}
+}
+
+func collectCreditBalance() (*CreditBalance, error) {
+	creditsEndpoint := userEndpoint + "/credits"
+
+	req, err := http.NewRequest(http.MethodGet, creditsEndpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *sendGridAPIKey))
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	switch res.StatusCode {
+	case http.StatusTooManyRequests:
+		return nil, fmt.Errorf("API rate limit exceeded")
+	case http.StatusOK:
+		var creditBalance CreditBalance
+		if err := json.NewDecoder(res.Body).Decode(&creditBalance); err != nil {
+			return nil, err
+		}
+
+		return &creditBalance, nil
 	default:
 		return nil, fmt.Errorf("status code = %d, response = %s", res.StatusCode, res.Body)
 	}

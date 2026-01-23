@@ -53,6 +53,10 @@ Name     | Description
 blocks | The number of emails that were not allowed to be delivered by ISPs.
 bounce_drops | The number of emails that were dropped because of a bounce.
 bounces | The number of emails that bounced instead of being delivered.
+credit_overage | The number of credits consumed beyond the plan's allocation.
+credit_remaining | The number of credits currently remaining in the billing period.
+credit_total | The total number of credits available in the billing period.
+credit_used | The number of credits already consumed in the billing period.
 deferred | The number of emails that temporarily could not be delivered.
 delivered | The number of emails SendGrid was able to confirm were actually delivered to a recipient.
 invalid_emails | The number of recipients who had malformed email addresses or whose mail provider reported the address as invalid.
