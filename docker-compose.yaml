@@ -1,4 +1,4 @@
-version: '3.7'
+version: "3.7"
 
 volumes:
   prometheus_data: { }
@@ -6,7 +6,7 @@ volumes:
 services:
 
   prometheus:
-    image: prom/prometheus:v2.1.0
+    image: prom/prometheus:v3.5.0
     container_name: prometheus
     hostname: prometheus
     volumes:
@@ -21,20 +21,18 @@ services:
       - "9090:9090"
 
   sendgrid-stats-exporter:
-    # image:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "9154:9154"
     healthcheck:
-      test: curl -s https://localhost:9154/-/healthy >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9154/-/healthy"]
       interval: 30s
       timeout: 5s
       retries: 5
-    command: ""
     environment:
       DISABLE_EXPORTER_METRICS: "true"
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
       SENDGRID_USER_NAME: ${SENDGRID_USER_NAME}
-
+      SENDGRID_API_BASE: ${SENDGRID_API_BASE:-https://api.sendgrid.com}

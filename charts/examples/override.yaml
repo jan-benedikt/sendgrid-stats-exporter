@@ -4,3 +4,4 @@ secret:
 extraEnv:
   SENDGRID_LOCATION: "Asia/Tokyo"
   SENDGRID_TIME_OFFSET: 32400
+  SENDGRID_API_BASE: "https://api.eu.sendgrid.com"
