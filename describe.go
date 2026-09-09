@@ -3,6 +3,7 @@ package main
 import "github.com/prometheus/client_golang/prometheus"
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.up
 	ch <- c.blocks
 	ch <- c.bounceDrops
 	ch <- c.bounces
