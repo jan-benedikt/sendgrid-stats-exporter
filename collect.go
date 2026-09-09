@@ -185,9 +185,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 	creditBalance, err := collectCreditBalance()
 	if err != nil {
-		level.Error(c.logger).Log(err)
-
-		return
+		level.Error(c.logger).Log("msg", "Failed to collect credit balance", "err", err)
 	}
 
 	for _, stats := range statistics[0].Stats {
@@ -289,28 +287,30 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		)
 	}
 
-	ch <- prometheus.MustNewConstMetric(
-		c.creditTotal,
-		prometheus.GaugeValue,
-		float64(creditBalance.Total),
-		*sendGridUserName,
-	)
-	ch <- prometheus.MustNewConstMetric(
-		c.creditRemain,
-		prometheus.GaugeValue,
-		float64(creditBalance.Remain),
-		*sendGridUserName,
-	)
-	ch <- prometheus.MustNewConstMetric(
-		c.creditUsed,
-		prometheus.GaugeValue,
-		float64(creditBalance.Used),
-		*sendGridUserName,
-	)
-	ch <- prometheus.MustNewConstMetric(
-		c.creditOverage,
-		prometheus.GaugeValue,
-		float64(creditBalance.Overage),
-		*sendGridUserName,
-	)
+	if creditBalance != nil {
+		ch <- prometheus.MustNewConstMetric(
+			c.creditTotal,
+			prometheus.GaugeValue,
+			float64(creditBalance.Total),
+			*sendGridUserName,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.creditRemain,
+			prometheus.GaugeValue,
+			float64(creditBalance.Remain),
+			*sendGridUserName,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.creditUsed,
+			prometheus.GaugeValue,
+			float64(creditBalance.Used),
+			*sendGridUserName,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.creditOverage,
+			prometheus.GaugeValue,
+			float64(creditBalance.Overage),
+			*sendGridUserName,
+		)
+	}
 }
