@@ -1,16 +1,15 @@
 package main
 
 import (
+	"log/slog"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/jinzhu/now"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Collector struct {
-	logger log.Logger
+	logger *slog.Logger
 
 	blocks           *prometheus.Desc
 	bounceDrops      *prometheus.Desc
@@ -34,7 +33,7 @@ type Collector struct {
 	unsubscribes     *prometheus.Desc
 }
 
-func collector(logger log.Logger) *Collector {
+func collector(logger *slog.Logger) *Collector {
 	return &Collector{
 		logger: logger,
 
@@ -178,14 +177,14 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 	statistics, err := collectByDate(queryDate, today)
 	if err != nil {
-		level.Error(c.logger).Log(err)
+		c.logger.Error("Failed to collect statistics", "err", err)
 
 		return
 	}
 
 	creditBalance, err := collectCreditBalance()
 	if err != nil {
-		level.Error(c.logger).Log("msg", "Failed to collect credit balance", "err", err)
+		c.logger.Error("Failed to collect credit balance", "err", err)
 	}
 
 	for _, stats := range statistics[0].Stats {

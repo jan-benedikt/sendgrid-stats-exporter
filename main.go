@@ -2,20 +2,19 @@ package main
 
 import (
 	"context"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/go-kit/log/level"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/promlog"
-	"github.com/prometheus/common/promlog/flag"
+	"github.com/prometheus/common/promslog"
+	"github.com/prometheus/common/promslog/flag"
 	"github.com/prometheus/common/version"
-	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const (
@@ -60,18 +59,16 @@ var (
 )
 
 func main() {
-	promlogConfig := &promlog.Config{}
-	flag.AddFlags(kingpin.CommandLine, promlogConfig)
-	kingpin.Version(version.Info())
+	promslogConfig := &promslog.Config{}
+	flag.AddFlags(kingpin.CommandLine, promslogConfig)
+	kingpin.Version(version.Print(exporterName))
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
 
-	logger := promlog.New(promlogConfig)
+	logger := promslog.New(promslogConfig)
 
-	level.Info(logger).Log("msg", "Starting", exporterName, "version", version.Info(), gitCommit)
-	level.Info(logger).Log("Build context", version.BuildContext())
-
-	level.Info(logger).Log("msg", "Listening on", *listenAddress)
+	logger.Info("Starting "+exporterName, "version", version.Info(), "build_context", version.BuildContext(), "git_commit", gitCommit)
+	logger.Info("Listening on address", "address", *listenAddress)
 
 	collector := collector(logger)
 	prometheus.MustRegister(collector)
@@ -109,8 +106,8 @@ func main() {
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			level.Error(logger).Log("err", err)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP server stopped", "err", err)
 		}
 	}()
 
@@ -120,6 +117,6 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		level.Error(logger).Log("err", err)
+		logger.Error("HTTP server shutdown failed", "err", err)
 	}
 }

@@ -6,7 +6,7 @@ linters-settings:
 
 run:
   deadline: 1m
-  go: '1.18'
+  go: '1.25'
 
 issues:
   exclude:
