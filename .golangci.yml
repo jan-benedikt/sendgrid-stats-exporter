@@ -1,14 +1,12 @@
-linters-settings:
-  errcheck:
-    exclude: scripts/errcheck_excludes.txt
-    check-type-assertions: false
-    check-blank: false
+version: "2"
 
 run:
-  deadline: 1m
-  go: '1.25'
+  timeout: 1m
 
-issues:
-  exclude:
-    - "`aliases.Schema` composite literal uses unkeyed fields"
-    - "`aliases.BinarySchema` composite literal uses unkeyed fields"
+linters:
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - (net/http.ResponseWriter).Write

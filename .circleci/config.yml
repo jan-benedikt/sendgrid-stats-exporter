@@ -2,17 +2,9 @@
 version: 2.1
 
 orbs:
-  # https://circleci.com/developer/orbs/orb/circleci/go
-  go: circleci/go@1.5.0
-
-executors:
-  docker_executor:
-    docker:
-      - image: chatwork/circleci-docker:20.10.14
-    working_directory: /root/project
+  go: circleci/go@3.0.4
 
 workflows:
-  version: 2
   integration:
     jobs:
       - go_build
@@ -30,28 +22,29 @@ jobs:
   go_build:
     executor:
       name: go/default
-      tag: '1.15'
+      tag: "1.26"
     steps:
       - checkout
-      - go/mod-download-cached
+      - go/mod-download
       - run:
           name: Enforce Go Formatted Code
-          command: "! go fmt ./... 2>&1 | read"
+          command: test -z "$(gofmt -l .)"
       - run:
           name: Install GolangCI-Lint
-          command: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.46.2
+          command: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b ./bin v2.13.2
       - run:
           name: Run GolangCI-Lint
-          command: ./bin/golangci-lint run --tests
+          command: ./bin/golangci-lint run
+      - run:
+          name: Run tests
+          command: go test ./...
       - run: make
 
   docker_build:
     machine:
-      image: ubuntu-2004:202104-01
-      docker_layer_caching: true
+      image: ubuntu-2404:current
     environment:
-      - CIRCLECI_WORKSPACE: /root/project
-      - BUILDX_PLATFORMS: linux/amd64,linux/arm64
+      BUILDX_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - checkout
       - run: docker version
@@ -62,16 +55,13 @@ jobs:
             docker run --privileged --rm tonistiigi/binfmt --install "$BUILDX_PLATFORMS"
             docker buildx create --name multi-arch --use
             docker buildx ls
-      - run: docker login -u="${DOCKER_REGISTRY_USERNAME}" -p="${DOCKER_REGISTRY_PASSWORD}"
       - run: make build-image-multi
 
   docker_build_and_push:
     machine:
-      image: ubuntu-2004:202104-01
-      docker_layer_caching: true
+      image: ubuntu-2404:current
     environment:
-      - CIRCLECI_WORKSPACE: /root/project
-      - BUILDX_PLATFORMS: linux/amd64,linux/arm64
+      BUILDX_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - checkout
       - run: docker version
