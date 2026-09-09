@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	statsEndpoint = "https://api.sendgrid.com/v3/stats"
-	userEndpoint  = "https://api.sendgrid.com/v3/user"
+	statsEndpoint = "https://api.eu.sendgrid.com/v3/stats"
+	userEndpoint  = "https://api.eu.sendgrid.com/v3/user"
 )
 
 type Metrics struct {
