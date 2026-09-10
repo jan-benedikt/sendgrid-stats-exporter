@@ -1,18 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
+	"strings"
 	"time"
 )
 
 const (
-	statsEndpoint = "https://api.sendgrid.com/v3/stats"
-	userEndpoint  = "https://api.sendgrid.com/v3/user"
+	defaultSendGridAPIBase = "https://api.sendgrid.com"
+	maxErrorBodyBytes      = 2048
+	maxResponseBodyBytes   = 1 << 20
 )
 
 type Metrics struct {
@@ -50,84 +52,95 @@ type CreditBalance struct {
 	Used    int64 `json:"used"`
 }
 
-func collectByDate(timeStart time.Time, timeEnd time.Time) ([]*Statistics, error) {
-	parsedURL, err := url.Parse(statsEndpoint)
+func (c *Collector) collectByDate(ctx context.Context, timeStart, timeEnd time.Time) ([]*Statistics, error) {
+	parsedURL, err := url.Parse(c.cfg.apiBase + "/v3/stats")
 	if err != nil {
 		return nil, err
 	}
 
 	layout := "2006-01-02"
-	dateStart := timeStart.Format(layout)
-	dateEnd := timeEnd.Format(layout)
-
 	query := url.Values{}
-	query.Set("start_date", dateStart)
-	query.Set("end_date", dateEnd)
-	if *accumulatedMetrics {
+	query.Set("start_date", timeStart.Format(layout))
+	query.Set("end_date", timeEnd.Format(layout))
+	if c.cfg.accumulatedMetrics {
 		query.Set("aggregated_by", "month")
 	} else {
 		query.Set("aggregated_by", "day")
 	}
 	parsedURL.RawQuery = query.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, parsedURL.String(), nil)
-	if err != nil {
+	var stats []*Statistics
+	if err := c.getJSON(ctx, parsedURL.String(), &stats); err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *sendGridAPIKey))
+	return stats, nil
+}
 
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
+func (c *Collector) collectCreditBalance(ctx context.Context) (*CreditBalance, error) {
+	var creditBalance CreditBalance
+	if err := c.getJSON(ctx, c.cfg.apiBase+"/v3/user/credits", &creditBalance); err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
 
-	var reader io.Reader = res.Body
-	reader = io.TeeReader(reader, os.Stdout)
+	return &creditBalance, nil
+}
+
+func (c *Collector) getJSON(ctx context.Context, rawURL string, dest any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.cfg.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBodyBytes))
+	if err != nil {
+		return fmt.Errorf("read sendgrid response: %w", err)
+	}
 
 	switch res.StatusCode {
 	case http.StatusTooManyRequests:
-		return nil, fmt.Errorf("API rate limit exceeded")
+		return fmt.Errorf("sendgrid API rate limit exceeded")
 	case http.StatusOK:
-		var stats []*Statistics
-		if err := json.NewDecoder(reader).Decode(&stats); err != nil {
-			return nil, err
+		if err := json.Unmarshal(body, dest); err != nil {
+			return fmt.Errorf("decode sendgrid response: %w", err)
 		}
-
-		return stats, nil
+		return nil
 	default:
-		return nil, fmt.Errorf("status code = %d, response = %s", res.StatusCode, res.Body)
+		return fmt.Errorf("sendgrid API status=%d body=%s", res.StatusCode, truncateBody(body))
 	}
 }
 
-func collectCreditBalance() (*CreditBalance, error) {
-	creditsEndpoint := userEndpoint + "/credits"
-
-	req, err := http.NewRequest(http.MethodGet, creditsEndpoint, nil)
-	if err != nil {
-		return nil, err
+func firstMetrics(statistics []*Statistics) (*Metrics, error) {
+	if len(statistics) == 0 {
+		return nil, fmt.Errorf("empty sendgrid statistics")
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *sendGridAPIKey))
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	switch res.StatusCode {
-	case http.StatusTooManyRequests:
-		return nil, fmt.Errorf("API rate limit exceeded")
-	case http.StatusOK:
-		var creditBalance CreditBalance
-		if err := json.NewDecoder(res.Body).Decode(&creditBalance); err != nil {
-			return nil, err
+	for _, stat := range statistics[0].Stats {
+		if stat != nil && stat.Metrics != nil {
+			return stat.Metrics, nil
 		}
-
-		return &creditBalance, nil
-	default:
-		return nil, fmt.Errorf("status code = %d, response = %s", res.StatusCode, res.Body)
 	}
+
+	return nil, fmt.Errorf("no metrics in sendgrid statistics")
+}
+
+func truncateBody(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) <= maxErrorBodyBytes {
+		return s
+	}
+	return s[:maxErrorBodyBytes] + "..."
+}
+
+func normalizeAPIBase(raw string) string {
+	return strings.TrimRight(raw, "/")
 }

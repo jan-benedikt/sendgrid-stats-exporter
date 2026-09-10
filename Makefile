@@ -1,35 +1,57 @@
-USER     := ada-u
-REPO     := sendgrid-stats-exporter
-GIT_TAG  := $(shell git tag --points-at HEAD)
-GIT_HASH := $(shell git rev-parse HEAD)
+IMAGE    ?= chatwork/sendgrid-stats-exporter
+GIT_TAG  := $(shell git tag --points-at HEAD 2>/dev/null)
+GIT_HASH := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
 VERSION  := $(shell if [ -n "$(GIT_TAG)" ]; then echo "$(GIT_TAG)"; else echo "$(GIT_HASH)"; fi)
 
-DIST_DIR := $(shell if [ -n "$(GOOS)$(GOARCH)" ]; then echo "./dist/$(GOOS)-$(GOARCH)"; else echo "./dist"; fi)
+DIST_DIR := ./dist
 
-# Default build target
-GOOS := $(shell go env GOOS)
-GOARCH := $(shell go env GOARCH)
 DOCKER_BUILD_PLATFORMS ?= linux/amd64,linux/arm64
 DOCKER_BUILDX_ARGS ?= --push
+
+LDFLAGS := -s -w \
+	-X github.com/prometheus/common/version.Version=$(VERSION) \
+	-X github.com/prometheus/common/version.Revision=$(GIT_HASH) \
+	-X github.com/prometheus/common/version.Branch=$(GIT_BRANCH)
 
 default: build
 
 .PHONY: build
 build:
 	@echo "version: $(VERSION) hash: $(GIT_HASH) tag: $(GIT_TAG)"
-	go build -ldflags "-s -w -X main.version=$(VERSION) -X main.gitCommit=$(GIT_HASH)" -o $(DIST_DIR)/exporter .
+	go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/exporter .
+
+.PHONY: test
+test:
+	go test ./...
 
 .PHONY: build-image
 build-image:
-	docker build -t chatwork/"$(REPO)" .
-	docker tag chatwork/"$(REPO)":latest chatwork/"$(REPO)":"$(VERSION)"
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(GIT_HASH) \
+		--build-arg BRANCH=$(GIT_BRANCH) \
+		-t $(IMAGE) .
+	docker tag $(IMAGE):latest $(IMAGE):$(VERSION)
 
 .PHONY: push-image
 push-image:
-	docker push chatwork/"$(REPO)"
+	docker push $(IMAGE)
 
+.PHONY: build-image-multi
 build-image-multi:
-	docker buildx build -t chatwork/"$(REPO)":"$(VERSION)" --platform=$(DOCKER_BUILD_PLATFORMS) .
+	docker buildx build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(GIT_HASH) \
+		--build-arg BRANCH=$(GIT_BRANCH) \
+		-t $(IMAGE):$(VERSION) \
+		--platform=$(DOCKER_BUILD_PLATFORMS) .
 
+.PHONY: push-image-multi
 push-image-multi:
-	docker buildx build $(DOCKER_BUILDX_ARGS) -t chatwork/"$(REPO)":"$(VERSION)" --platform=$(DOCKER_BUILD_PLATFORMS) .
+	docker buildx build $(DOCKER_BUILDX_ARGS) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg REVISION=$(GIT_HASH) \
+		--build-arg BRANCH=$(GIT_BRANCH) \
+		-t $(IMAGE):$(VERSION) \
+		--platform=$(DOCKER_BUILD_PLATFORMS) .
