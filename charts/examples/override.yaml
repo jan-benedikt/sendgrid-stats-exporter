@@ -2,6 +2,8 @@ secret:
   apiKey: "secret"
   username: "adachangrid"
 extraEnv:
-  SENDGRID_LOCATION: "Asia/Tokyo"
+  SENDGRID_LOCATION: "Europe/Prague"
   SENDGRID_TIME_OFFSET: 32400
   SENDGRID_API_BASE: "https://api.eu.sendgrid.com"
+  SENDGRID_INCLUDE_SUBUSERS: "true"
+  SENDGRID_TIMEOUT: "10s"

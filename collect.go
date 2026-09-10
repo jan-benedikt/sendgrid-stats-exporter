@@ -16,9 +16,9 @@ type Collector struct {
 	cfg    collectorConfig
 	client *http.Client
 
-	mu          sync.Mutex
-	lastMetrics *Metrics
-	lastCredits *CreditBalance
+	mu                sync.Mutex
+	lastMetricsByUser map[string]*Metrics
+	lastCredits       *CreditBalance
 
 	up               *prometheus.Desc
 	blocks           *prometheus.Desc
@@ -45,11 +45,7 @@ type Collector struct {
 
 func newCollector(logger *slog.Logger, cfg collectorConfig, client *http.Client) *Collector {
 	if client == nil {
-		timeout := cfg.httpTimeout
-		if timeout <= 0 {
-			timeout = 10 * time.Second
-		}
-		client = &http.Client{Timeout: timeout}
+		client = newSendGridHTTPClient(cfg.requestTimeout())
 	}
 
 	labels := []string{"user_name"}
@@ -88,11 +84,10 @@ func newDesc(name, help string, labels []string) *prometheus.Desc {
 }
 
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
-	timeout := c.cfg.httpTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.scrapeTimeout())
 	defer cancel()
 
 	today := time.Now()
@@ -105,23 +100,17 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		queryDate = now.With(today).BeginningOfMonth()
 	}
 
-	statistics, statsErr := c.collectByDate(ctx, queryDate, today)
+	byUser, statsErr := c.collectStatsByUser(ctx, queryDate, today)
 	creditBalance, creditErr := c.collectCreditBalance(ctx)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	up := 1.0
-	metrics := c.lastMetrics
+	metricsByUser := c.lastMetricsByUser
 	if statsErr != nil {
 		c.logger.Error("Failed to collect statistics", "err", statsErr)
 		up = 0
-	} else if m, err := firstMetrics(statistics); err != nil {
-		c.logger.Error("Failed to parse statistics", "err", err)
-		up = 0
 	} else {
-		c.lastMetrics = m
-		metrics = m
+		c.lastMetricsByUser = byUser
+		metricsByUser = byUser
 	}
 
 	credits := c.lastCredits
@@ -132,42 +121,73 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		credits = creditBalance
 	}
 
-	c.emit(ch, c.up, up)
+	account := c.accountLabel()
+	c.emit(ch, c.up, up, account)
 
-	if metrics != nil {
-		c.emitStats(ch, metrics)
+	for userName, metrics := range metricsByUser {
+		if metrics == nil {
+			continue
+		}
+		c.emitStats(ch, userName, metrics)
 	}
 	if credits != nil {
-		c.emitCredits(ch, credits)
+		c.emitCredits(ch, account, credits)
 	}
 }
 
-func (c *Collector) emitStats(ch chan<- prometheus.Metric, metrics *Metrics) {
-	c.emit(ch, c.blocks, float64(metrics.Blocks))
-	c.emit(ch, c.bounceDrops, float64(metrics.BounceDrops))
-	c.emit(ch, c.bounces, float64(metrics.Bounces))
-	c.emit(ch, c.clicks, float64(metrics.Clicks))
-	c.emit(ch, c.deferred, float64(metrics.Deferred))
-	c.emit(ch, c.delivered, float64(metrics.Delivered))
-	c.emit(ch, c.invalidEmails, float64(metrics.InvalidEmails))
-	c.emit(ch, c.opens, float64(metrics.Opens))
-	c.emit(ch, c.processed, float64(metrics.Processed))
-	c.emit(ch, c.requests, float64(metrics.Requests))
-	c.emit(ch, c.spamReportDrops, float64(metrics.SpamReportDrops))
-	c.emit(ch, c.spamReports, float64(metrics.SpamReports))
-	c.emit(ch, c.uniqueClicks, float64(metrics.UniqueClicks))
-	c.emit(ch, c.uniqueOpens, float64(metrics.UniqueOpens))
-	c.emit(ch, c.unsubscribeDrops, float64(metrics.UnsubscribeDrops))
-	c.emit(ch, c.unsubscribes, float64(metrics.Unsubscribes))
+func (c *Collector) collectStatsByUser(ctx context.Context, queryDate, today time.Time) (map[string]*Metrics, error) {
+	if c.cfg.includeSubusers {
+		return c.collectSubuserMonthlyMetrics(ctx, today)
+	}
+
+	statistics, err := c.collectByDate(ctx, queryDate, today)
+	if err != nil {
+		return nil, err
+	}
+	m, err := firstMetrics(statistics)
+	if err != nil {
+		return nil, err
+	}
+	copied := *m
+	return map[string]*Metrics{c.cfg.userName: &copied}, nil
 }
 
-func (c *Collector) emitCredits(ch chan<- prometheus.Metric, credits *CreditBalance) {
-	c.emit(ch, c.creditTotal, float64(credits.Total))
-	c.emit(ch, c.creditRemain, float64(credits.Remain))
-	c.emit(ch, c.creditUsed, float64(credits.Used))
-	c.emit(ch, c.creditOverage, float64(credits.Overage))
+func (c *Collector) accountLabel() string {
+	if c.cfg.userName != "" {
+		return c.cfg.userName
+	}
+	if c.cfg.includeSubusers {
+		return "parent"
+	}
+	return ""
 }
 
-func (c *Collector) emit(ch chan<- prometheus.Metric, desc *prometheus.Desc, value float64) {
-	ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, value, c.cfg.userName)
+func (c *Collector) emitStats(ch chan<- prometheus.Metric, userName string, metrics *Metrics) {
+	c.emit(ch, c.blocks, float64(metrics.Blocks), userName)
+	c.emit(ch, c.bounceDrops, float64(metrics.BounceDrops), userName)
+	c.emit(ch, c.bounces, float64(metrics.Bounces), userName)
+	c.emit(ch, c.clicks, float64(metrics.Clicks), userName)
+	c.emit(ch, c.deferred, float64(metrics.Deferred), userName)
+	c.emit(ch, c.delivered, float64(metrics.Delivered), userName)
+	c.emit(ch, c.invalidEmails, float64(metrics.InvalidEmails), userName)
+	c.emit(ch, c.opens, float64(metrics.Opens), userName)
+	c.emit(ch, c.processed, float64(metrics.Processed), userName)
+	c.emit(ch, c.requests, float64(metrics.Requests), userName)
+	c.emit(ch, c.spamReportDrops, float64(metrics.SpamReportDrops), userName)
+	c.emit(ch, c.spamReports, float64(metrics.SpamReports), userName)
+	c.emit(ch, c.uniqueClicks, float64(metrics.UniqueClicks), userName)
+	c.emit(ch, c.uniqueOpens, float64(metrics.UniqueOpens), userName)
+	c.emit(ch, c.unsubscribeDrops, float64(metrics.UnsubscribeDrops), userName)
+	c.emit(ch, c.unsubscribes, float64(metrics.Unsubscribes), userName)
+}
+
+func (c *Collector) emitCredits(ch chan<- prometheus.Metric, userName string, credits *CreditBalance) {
+	c.emit(ch, c.creditTotal, float64(credits.Total), userName)
+	c.emit(ch, c.creditRemain, float64(credits.Remain), userName)
+	c.emit(ch, c.creditUsed, float64(credits.Used), userName)
+	c.emit(ch, c.creditOverage, float64(credits.Overage), userName)
+}
+
+func (c *Collector) emit(ch chan<- prometheus.Metric, desc *prometheus.Desc, value float64, userName string) {
+	ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, value, userName)
 }
