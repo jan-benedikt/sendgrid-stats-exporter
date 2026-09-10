@@ -32,12 +32,15 @@ Flags:
       --sendgrid.username=""  [Optional] SendGrid username as a label for each metric.
       --sendgrid.api-base="https://api.sendgrid.com"
                               [Optional] SendGrid API base URL. Use https://api.eu.sendgrid.com for the EU region.
-      --sendgrid.timeout=10s  [Optional] Timeout for SendGrid API requests.
+      --sendgrid.timeout=10s  [Optional] Timeout for a single SendGrid API request.
+                              With --sendgrid.include-subusers the scrape budget is 3× this value.
       --sendgrid.location=""  [Optional] Time zone name (e.g. Asia/Tokyo). The default is UTC.
       --sendgrid.time-offset=0
                               [Optional] Offset in seconds from UTC (e.g. 32400). Must be set together with location.
       --sendgrid.accumulated-metrics=false
                               [Optional] Accumulate SendGrid metrics by month, to calculate monthly email limit.
+      --sendgrid.include-subusers=false
+                              [Optional] Fetch monthly statistics for all subusers with a parent API key.
       --log.level=info        Only log messages with the given severity or above. One of: [debug, info, warn, error]
       --log.format=logfmt     Output format of log messages. One of: [logfmt, json]
       --version               Show application version.
@@ -87,6 +90,27 @@ $ docker run -d -p 9154:9154 -e SENDGRID_API_KEY=secret chatwork/sendgrid-stats-
 ```
 
 For the EU region, also set `SENDGRID_API_BASE=https://api.eu.sendgrid.com`.
+
+### Subusers (monthly stats)
+
+To scrape **Requests this month** for every subuser (the numbers shown in the SendGrid Subuser Statistics UI), run **one** exporter with a **parent** API key and enable:
+
+```
+SENDGRID_INCLUDE_SUBUSERS=true
+```
+
+The exporter then calls `GET /v3/subusers/stats/monthly` (paginated) instead of `GET /v3/stats`, and emits one series per subuser:
+
+```
+sendgrid_requests{user_name="intr-tmop"} 3150
+sendgrid_requests{user_name="c373-373d"} 1524
+```
+
+`sendgrid_up` and credit metrics stay on the parent account (`SENDGRID_USER_NAME`, or `parent` if unset). The API key needs permission to read **subuser statistics** (a key that can call `/v3/stats` may still get `403` on `/v3/subusers/stats/monthly`). Do not run one replica per subuser with the same parent key — you would duplicate every series.
+
+If listing subusers fails, monthly stats are still exported; subusers with no activity this month may be omitted.
+
+Each scrape does several SendGrid calls (paginated monthly stats, subuser list, credits). The overall scrape budget is `3 × SENDGRID_TIMEOUT` (default 30s). Prometheus `scrapeTimeout` must be higher than that and still below the scrape interval (Helm default: interval 60s, scrapeTimeout 45s).
 
 #### Running with `docker-compose`
 

@@ -60,7 +60,7 @@ The following table lists the configurable parameters of the Sendgrid-stats-expo
 | `podSecurityContext` | Security context for the pod | non-root UID 65532 |
 | `securityContext` | Security context for container | drop ALL, read-only root, non-root |
 | `envFrom` | Extra environment from ConfigMaps/Secrets | `[]` |
-| `extraEnv` | Extra environment variables (map) | `{}` |
+| `extraEnv` | Extra environment variables (map). Set `SENDGRID_INCLUDE_SUBUSERS: "true"` to scrape monthly stats for all subusers. | `{}` |
 | `secret.create` | If true, create a Secret from values | `true` |
 | `secret.name` | Existing secret name when `secret.create=false` | `""` |
 | `secret.apiKey` | SendGrid API token (used when creating a Secret) | `""` |
@@ -82,7 +82,7 @@ The following table lists the configurable parameters of the Sendgrid-stats-expo
 | `autoscaling.targetCPUUtilizationPercentage` |  | `80` |
 | `serviceMonitor.enabled` | Create a Prometheus Operator ServiceMonitor | `false` |
 | `serviceMonitor.interval` | Scrape interval | `"60s"` |
-| `serviceMonitor.scrapeTimeout` | Scrape timeout | `"15s"` |
+| `serviceMonitor.scrapeTimeout` | Scrape timeout (must stay below `interval`; use ≥ 3× `SENDGRID_TIMEOUT` with subusers) | `"45s"` |
 | `nodeSelector` | Node labels for pod assignment | `{}` |
 | `tolerations` | Add tolerations | `[]` |
 | `affinity` | Node/Pod affinities | `{}` |

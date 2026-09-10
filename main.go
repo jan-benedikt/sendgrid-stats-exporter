@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,7 +36,24 @@ type collectorConfig struct {
 	location           string
 	timeOffset         int
 	accumulatedMetrics bool
+	includeSubusers    bool
 	httpTimeout        time.Duration
+}
+
+func (cfg collectorConfig) requestTimeout() time.Duration {
+	if cfg.httpTimeout <= 0 {
+		return 10 * time.Second
+	}
+	return cfg.httpTimeout
+}
+
+func (cfg collectorConfig) scrapeTimeout() time.Duration {
+	timeout := cfg.requestTimeout()
+	if cfg.includeSubusers {
+		// monthly stats pages + subuser list pages + credits
+		return timeout * 3
+	}
+	return timeout
 }
 
 func main() {
@@ -76,6 +94,10 @@ func main() {
 			"sendgrid.accumulated-metrics",
 			"Accumulate SendGrid metrics by month, to calculate monthly email limit.",
 		).Default("false").Envar("SENDGRID_ACCUMULATED_METRICS").Bool()
+		includeSubusers = kingpin.Flag(
+			"sendgrid.include-subusers",
+			"Fetch monthly statistics for all subusers (parent API key). Emits one series per subuser on user_name.",
+		).Default("false").Envar("SENDGRID_INCLUDE_SUBUSERS").Bool()
 	)
 
 	promslogConfig := &promslog.Config{}
@@ -92,12 +114,18 @@ func main() {
 		location:           *location,
 		timeOffset:         *timeOffset,
 		accumulatedMetrics: *accumulatedMetrics,
+		includeSubusers:    *includeSubusers,
 		httpTimeout:        *sendGridHTTPTimeout,
 	}, *listenAddress, *disableExporterMetrics))
 }
 
 func run(logger *slog.Logger, cfg collectorConfig, listenAddress string, disableExporterMetrics bool) int {
-	logger.Info("Starting "+exporterName, "version", version.Info(), "build_context", version.BuildContext(), "api_base", cfg.apiBase)
+	if err := validateAPIBase(cfg.apiBase); err != nil {
+		logger.Error("Invalid SendGrid API base", "err", err)
+		return 1
+	}
+
+	logger.Info("Starting "+exporterName, "version", version.Info(), "build_context", version.BuildContext(), "api_base", cfg.apiBase, "include_subusers", cfg.includeSubusers)
 	logger.Info("Listening on address", "address", listenAddress)
 
 	col := newCollector(logger, cfg, nil)
@@ -110,26 +138,33 @@ func run(logger *slog.Logger, cfg collectorConfig, listenAddress string, disable
 	}
 	registry.MustRegister(col)
 
+	scrapeTimeout := cfg.scrapeTimeout()
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{
-		Timeout: cfg.httpTimeout + 5*time.Second,
+		Timeout: scrapeTimeout + 5*time.Second,
 	}))
 	mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
+	ln, err := net.Listen("tcp", listenAddress)
+	if err != nil {
+		logger.Error("Listen failed", "err", err)
+		return 1
+	}
+
 	srv := &http.Server{
-		Addr:         listenAddress,
-		Handler:      mux,
-		ReadTimeout:  httpReadTimeout,
-		WriteTimeout: cfg.httpTimeout + 10*time.Second,
-		IdleTimeout:  httpIdleTimeout,
+		Handler:           mux,
+		ReadTimeout:       httpReadTimeout,
+		ReadHeaderTimeout: httpReadTimeout,
+		WriteTimeout:      scrapeTimeout + 10*time.Second,
+		IdleTimeout:       httpIdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

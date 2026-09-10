@@ -76,7 +76,7 @@ autoscaling:
 serviceMonitor:
   enabled: false
   interval: 60s
-  scrapeTimeout: 15s
+  scrapeTimeout: 45s
   additionalLabels: {}
 
 nodeSelector: {}
